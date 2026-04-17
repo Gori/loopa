@@ -1,0 +1,12 @@
+build/
+build-*/
+.DS_Store
+*.user
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+.vscode/
+.idea/
+compile_commands.json
+.cache/
+.claude/
