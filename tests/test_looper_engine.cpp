@@ -1,9 +1,13 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "core/EngineMessages.h"
+#include "core/Loop.h"
 #include "core/LooperEngine.h"
 
 #include <cmath>
+#include <cstdint>
+#include <memory>
 #include <vector>
 
 using loopa::CommandKind;
@@ -366,6 +370,156 @@ TEST_CASE("LooperEngine with compensation larger than recording fails cleanly", 
     }
     REQUIRE(sawFail);
     REQUIRE(e.snapshot().trackLoopCount[0] == 0);
+}
+
+TEST_CASE("LooperEngine::submitLoop immediately activates when transport isn't playing", "[engine][timbre]") {
+    LooperEngine e;
+    e.prepareToPlay(kSR, kBlock);
+
+    // Transport hasn't been started and no recording has happened — no active
+    // loop yet. Submitting with activate=true should install the loop and make
+    // it active immediately.
+    const std::size_t len = static_cast<std::size_t>(2.0 * kSR);
+    auto loop = std::make_shared<loopa::Loop>(2, 120.0, kSR, len);
+    for (std::size_t i = 0; i < len; ++i) {
+        loop->data()[i] = 0.25f;
+    }
+    e.submitLoop(0, loop, /*activateOnNextBar=*/true);
+
+    BlockIO io(kBlock);
+    runBlock(e, io);
+
+    const auto s = e.snapshot();
+    REQUIRE(s.trackLoopCount[0] == 1);
+    REQUIRE(s.trackActiveLoopIx[0] == 0);
+
+    bool sawLoopAdded = false;
+    while (auto ev = e.drainEvent()) {
+        if (ev->kind == EventKind::LoopAdded && ev->trackId == 0) {
+            sawLoopAdded = true;
+            REQUIRE(ev->intArg == 0);
+        }
+    }
+    REQUIRE(sawLoopAdded);
+
+    // UI-thread view of the active loop mirrors the audio-thread state.
+    auto uiLoop = e.activeLoopForUi(0);
+    REQUIRE(uiLoop != nullptr);
+    REQUIRE(uiLoop->length() == len);
+}
+
+TEST_CASE("LooperEngine::submitLoop with transport playing defers active switch to bar-0", "[engine][timbre]") {
+    LooperEngine e;
+    e.prepareToPlay(kSR, kBlock);
+
+    // Establish a 2 bar @ 120 BPM loop on track 0 by recording.
+    postCommand(e, CommandKind::SetTrackArmed, 0, 0, 0.0, true);
+    postCommand(e, CommandKind::StartRecord);
+    BlockIO io(kBlock);
+    io.fillInput(0.5f);
+    for (std::size_t n = 0; n < static_cast<std::size_t>(4.0 * kSR); n += kBlock) {
+        runBlock(e, io);
+    }
+    postCommand(e, CommandKind::StopRecord);
+    { BlockIO silent(kBlock); runBlock(e, silent); }
+
+    // Drain the events we don't care about.
+    while (e.drainEvent()) {}
+
+    // Grab the installed loop's shape so we can mint a compatible second one.
+    auto orig = e.activeLoopForUi(0);
+    REQUIRE(orig != nullptr);
+    const std::size_t len = orig->length();
+
+    auto converted = std::make_shared<loopa::Loop>(orig->bars(), orig->bpm(),
+                                                    orig->sampleRate(), len);
+    for (std::size_t i = 0; i < len; ++i) {
+        converted->data()[i] = -0.25f;  // distinguishable from the 0.5 recording
+    }
+
+    // Submit while transport is playing mid-loop.
+    const auto sMid = e.snapshot();
+    REQUIRE(sMid.playing);
+    const std::uint64_t posBefore = sMid.samplePosition;
+    REQUIRE(posBefore > 0);
+    REQUIRE(posBefore < sMid.totalLengthSamples);
+
+    e.submitLoop(0, converted, /*activateOnNextBar=*/true);
+
+    // Next processBlock drains the inbox: loop appended but NOT active yet.
+    BlockIO io2(kBlock);
+    runBlock(e, io2);
+    {
+        const auto s = e.snapshot();
+        REQUIRE(s.trackLoopCount[0] == 2);
+        REQUIRE(s.trackActiveLoopIx[0] == 0);  // pending until bar-0
+    }
+
+    // LoopAdded should have fired already.
+    {
+        bool sawLoopAdded = false;
+        while (auto ev = e.drainEvent()) {
+            if (ev->kind == EventKind::LoopAdded && ev->intArg == 1) {
+                sawLoopAdded = true;
+            }
+        }
+        REQUIRE(sawLoopAdded);
+    }
+
+    // Run enough blocks to cross bar 0 (wrap).
+    const std::size_t blocksToWrap = static_cast<std::size_t>(len) / kBlock + 4;
+    for (std::size_t b = 0; b < blocksToWrap; ++b) {
+        runBlock(e, io2);
+    }
+
+    const auto sAfter = e.snapshot();
+    REQUIRE(sAfter.trackActiveLoopIx[0] == 1);
+
+    // UI-thread mirror reflects the new active loop (the -0.25 one).
+    auto uiLoop = e.activeLoopForUi(0);
+    REQUIRE(uiLoop != nullptr);
+    REQUIRE(uiLoop->data()[0] == Catch::Approx(-0.25f));
+}
+
+TEST_CASE("LooperEngine::submitLoop pending switch is cleared by a manual cycle", "[engine][timbre]") {
+    LooperEngine e;
+    e.prepareToPlay(kSR, kBlock);
+
+    // Establish a loop and start playing.
+    postCommand(e, CommandKind::SetTrackArmed, 0, 0, 0.0, true);
+    postCommand(e, CommandKind::StartRecord);
+    BlockIO io(kBlock);
+    io.fillInput(0.5f);
+    for (std::size_t n = 0; n < static_cast<std::size_t>(4.0 * kSR); n += kBlock) {
+        runBlock(e, io);
+    }
+    postCommand(e, CommandKind::StopRecord);
+    { BlockIO silent(kBlock); runBlock(e, silent); }
+    while (e.drainEvent()) {}
+
+    auto orig = e.activeLoopForUi(0);
+    REQUIRE(orig != nullptr);
+    auto converted = std::make_shared<loopa::Loop>(orig->bars(), orig->bpm(),
+                                                    orig->sampleRate(), orig->length());
+    for (std::size_t i = 0; i < orig->length(); ++i) converted->data()[i] = 0.1f;
+
+    e.submitLoop(0, converted, /*activateOnNextBar=*/true);
+    { BlockIO tmp(kBlock); runBlock(e, tmp); }  // inbox drain
+
+    // User manually cycles before bar-0 arrives — should clobber the pending
+    // switch. Cycling from 0 lands on 1 anyway (only two loops), so we test
+    // that no SECOND switch occurs: manually cycle back to 0, then cross
+    // bar-0, and confirm active stays at 0 (pending was cleared).
+    postCommand(e, CommandKind::CycleNextLoop, 0);       // ix 0 -> 1
+    { BlockIO tmp(kBlock); runBlock(e, tmp); }
+    postCommand(e, CommandKind::CycleNextLoop, 0);       // ix 1 -> 0 (wrap)
+    { BlockIO tmp(kBlock); runBlock(e, tmp); }
+    REQUIRE(e.snapshot().trackActiveLoopIx[0] == 0);
+
+    const std::size_t blocksToWrap = orig->length() / kBlock + 4;
+    for (std::size_t b = 0; b < blocksToWrap; ++b) { BlockIO tmp(kBlock); runBlock(e, tmp); }
+
+    REQUIRE(e.snapshot().trackActiveLoopIx[0] == 0);
 }
 
 TEST_CASE("LooperEngine rejects recording too short to fit any supported bars@BPM", "[engine]") {

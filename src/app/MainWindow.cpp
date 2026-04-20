@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include "MainComponent.h"
+#include "TimbreTransferService.h"
 
 namespace loopa::app {
 
@@ -8,10 +9,11 @@ MainWindow::MainWindow(const juce::String& name,
                        juce::Colour backgroundColour,
                        int buttonsNeeded,
                        loopa::LooperEngine& engine,
-                       juce::AudioDeviceManager& deviceManager)
+                       juce::AudioDeviceManager& deviceManager,
+                       TimbreTransferService& timbre)
     : juce::DocumentWindow(name, backgroundColour, buttonsNeeded) {
     setUsingNativeTitleBar(true);
-    setContentOwned(new MainComponent(engine, deviceManager), true);
+    setContentOwned(new MainComponent(engine, deviceManager, timbre), true);
     setResizable(true, true);
     centreWithSize(1200, 720);
     setVisible(true);

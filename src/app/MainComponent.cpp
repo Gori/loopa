@@ -13,8 +13,9 @@
 namespace loopa::app {
 
 MainComponent::MainComponent(loopa::LooperEngine& engine,
-                             juce::AudioDeviceManager& deviceManager)
-    : m_engine(engine), m_deviceManager(deviceManager), m_bridge(engine) {
+                             juce::AudioDeviceManager& deviceManager,
+                             TimbreTransferService& timbre)
+    : m_engine(engine), m_deviceManager(deviceManager), m_bridge(engine, timbre) {
     setWantsKeyboardFocus(true);
 
     m_topBar = std::make_unique<TopBar>(m_bridge);
@@ -113,6 +114,15 @@ void MainComponent::timerCallback() {
                 m_bridge.setMetronome(true);
                 m_metronomeAutoTriggered = true;
             }
+        } else if (ev->kind == loopa::EventKind::LoopAdded) {
+            LOG_INFO("MainComponent: LoopAdded event — track "
+                     + std::to_string(ev->trackId)
+                     + ", new loop index " + std::to_string(ev->intArg)
+                     + " (waiting for next bar-0 to activate)");
+        } else if (ev->kind == loopa::EventKind::RecordingComplete) {
+            LOG_INFO("MainComponent: RecordingComplete event — track "
+                     + std::to_string(ev->trackId)
+                     + ", " + std::to_string(ev->uint64Arg) + " samples captured");
         }
     }
 

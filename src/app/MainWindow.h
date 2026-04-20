@@ -9,13 +9,16 @@ class LooperEngine;
 
 namespace loopa::app {
 
+class TimbreTransferService;
+
 class MainWindow : public juce::DocumentWindow {
 public:
     MainWindow(const juce::String& name,
                juce::Colour backgroundColour,
                int buttonsNeeded,
                loopa::LooperEngine& engine,
-               juce::AudioDeviceManager& deviceManager);
+               juce::AudioDeviceManager& deviceManager,
+               TimbreTransferService& timbre);
 
     void closeButtonPressed() override;
 

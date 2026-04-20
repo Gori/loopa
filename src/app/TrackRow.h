@@ -47,6 +47,8 @@ private:
     void cycleMode();
     void cycleInput();
     void toggleMute();
+    void convertWithCurrentTimbre();
+    void showTimbreMenu();
 
     EngineBridge& m_bridge;
     const int m_trackId;
@@ -56,11 +58,13 @@ private:
     ChipButton m_input;
     ChipButton m_bars;
     ChipButton m_mode;
-    ChipButton m_mute;   // icon
+    ChipButton m_convert;  // AI timbre transfer
+    ChipButton m_mute;     // icon
 
     std::unique_ptr<WaveformView> m_waveform;
 
     bool m_selected = false;
+    int  m_currentTimbreIndex = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TrackRow)
 };

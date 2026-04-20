@@ -85,6 +85,13 @@ public:
     // active loop changes (record complete, cycle loop, switch, etc).
     std::shared_ptr<const Loop> activeLoopForUi(int trackId) const;
 
+    // Hand a freshly-constructed Loop to the engine (e.g. from a timbre
+    // transfer worker on the UI or a background thread). The loop is
+    // appended to the track's loop list; if activateOnNextBar is true, it
+    // becomes the active loop at the next bar-0 crossing — or immediately
+    // if the transport isn't running. UI/worker-thread safe.
+    void submitLoop(int trackId, std::shared_ptr<Loop> loop, bool activateOnNextBar);
+
     // Raw pointer to a track's pre-allocated recording buffer. Lifetime is the
     // engine's; pointer is stable after prepareToPlay. Reading samples outside
     // the range [0, recordingBufferWritten(trackId)) returns undefined values.
@@ -96,6 +103,7 @@ public:
 
 private:
     void handleCommand(const EngineCommand& cmd) noexcept;
+    void drainLoopInbox() noexcept;
     void pushEvent(const EngineEvent& ev) noexcept;
     void writeSnapshotAtomics() noexcept;
     void startRecordingOrCountIn() noexcept;
@@ -154,9 +162,24 @@ private:
     std::array<std::atomic<std::uint64_t>, kNumTracks> m_snapRecordingWritten{};
 
     // Mirror of each track's active loop, kept up-to-date by the audio thread
-    // for safe UI reads. Protected by m_uiLoopMutex on both sides.
+    // for safe UI reads. Protected by m_uiLoopMutex on both sides. The same
+    // mutex also guards m_loopInbox below.
     mutable std::mutex m_uiLoopMutex;
     std::array<std::shared_ptr<const Loop>, kNumTracks> m_uiActiveLoop;
+
+    // Inbox for loops produced off the audio thread (timbre transfer
+    // completions). UI/worker thread pushes under m_uiLoopMutex; audio
+    // thread drains via try_lock at the start of processBlock.
+    struct LoopInboxEntry {
+        int trackId = -1;
+        std::shared_ptr<Loop> loop;
+        bool activateOnNextBar = false;
+    };
+    std::vector<LoopInboxEntry> m_loopInbox;
+
+    // Per-track "switch to this loop index at next bar-0" intent, written by
+    // drainLoopInbox and consumed in handleTransportCrossings.
+    std::array<std::optional<int>, kNumTracks> m_pendingActiveLoopIx{};
 };
 
 }  // namespace loopa

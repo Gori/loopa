@@ -51,6 +51,10 @@ void ChipButton::setOnClick(std::function<void()> onClick) {
     m_onClick = std::move(onClick);
 }
 
+void ChipButton::setOnRightClick(std::function<void()> onRightClick) {
+    m_onRightClick = std::move(onRightClick);
+}
+
 void ChipButton::setIcon(ChipIcon i) {
     if (m_icon == i) return;
     m_icon = i;
@@ -170,6 +174,10 @@ void ChipButton::paint(juce::Graphics& g) {
 
 void ChipButton::mouseUp(const juce::MouseEvent& e) {
     if (!m_enabled || !contains(e.getPosition())) return;
+    if (e.mods.isPopupMenu()) {
+        if (m_onRightClick) m_onRightClick();
+        return;
+    }
     if (m_onClick) m_onClick();
 }
 

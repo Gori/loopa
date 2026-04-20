@@ -1,6 +1,9 @@
 #include "LooperEngine.h"
 
+#include "Logger.h"
+
 #include <cstring>
+#include <string>
 
 namespace loopa {
 
@@ -258,6 +261,71 @@ std::shared_ptr<const Loop> LooperEngine::activeLoopForUi(int trackId) const {
     return m_uiActiveLoop[static_cast<std::size_t>(trackId)];
 }
 
+void LooperEngine::submitLoop(int trackId, std::shared_ptr<Loop> loop,
+                              bool activateOnNextBar) {
+    if (trackId < 0 || trackId >= kNumTracks || !loop) {
+        LOG_WARN("LooperEngine::submitLoop: invalid args (trackId="
+                 + std::to_string(trackId)
+                 + ", loop=" + (loop ? "valid" : "null") + ")");
+        return;
+    }
+    const auto len = loop->length();
+    {
+        std::lock_guard<std::mutex> lk(m_uiLoopMutex);
+        m_loopInbox.push_back({trackId, std::move(loop), activateOnNextBar});
+    }
+    LOG_INFO("LooperEngine::submitLoop: queued for track " + std::to_string(trackId)
+             + ", length=" + std::to_string(len)
+             + ", activateOnNextBar=" + (activateOnNextBar ? "true" : "false")
+             + " — audio thread will drain at top of next processBlock");
+}
+
+void LooperEngine::drainLoopInbox() noexcept {
+    std::vector<LoopInboxEntry> entries;
+    {
+        std::unique_lock<std::mutex> lk(m_uiLoopMutex, std::try_to_lock);
+        if (!lk.owns_lock() || m_loopInbox.empty()) {
+            return;
+        }
+        entries.swap(m_loopInbox);
+    }
+
+    const bool transportPlaying = m_transport.isPlaying()
+                               && m_transport.totalLengthSamples() > 0;
+    bool anyImmediateActivation = false;
+
+    for (auto& e : entries) {
+        if (e.trackId < 0 || e.trackId >= kNumTracks || !e.loop) {
+            continue;
+        }
+        const auto ix = static_cast<std::size_t>(e.trackId);
+        const int newIdx = m_tracks[ix].appendLoop(std::move(e.loop));
+        pushEvent(EngineEvent{EventKind::LoopAdded, e.trackId, newIdx, 0, 0.0, 0});
+
+        if (!e.activateOnNextBar) {
+            continue;
+        }
+        if (transportPlaying) {
+            m_pendingActiveLoopIx[ix] = newIdx;
+        } else {
+            m_tracks[ix].setActiveLoopIx(newIdx);
+            publishActiveLoopForUi(e.trackId);
+            anyImmediateActivation = true;
+        }
+    }
+    if (anyImmediateActivation) {
+        updateTransportLength();
+    }
+    // One-shot diagnostic log; fires only after a timbre transfer completes.
+    // Not RT-clean (mutex + fprintf), but the handoff is rare enough that an
+    // occasional microsecond stall here is an acceptable cost for visibility.
+    if (!entries.empty()) {
+        LOG_INFO("LooperEngine::drainLoopInbox: drained " + std::to_string(entries.size())
+                 + " loop(s), transportPlaying="
+                 + (transportPlaying ? "true" : "false"));
+    }
+}
+
 void LooperEngine::handleCommand(const EngineCommand& cmd) noexcept {
     const std::size_t tix = (cmd.trackId >= 0 && cmd.trackId < kNumTracks)
                               ? static_cast<std::size_t>(cmd.trackId)
@@ -353,6 +421,7 @@ void LooperEngine::handleCommand(const EngineCommand& cmd) noexcept {
         case CommandKind::CycleNextLoop:
             if (cmd.trackId >= 0 && cmd.trackId < kNumTracks) {
                 m_tracks[tix].cycleNextLoop();
+                m_pendingActiveLoopIx[tix].reset();
                 updateTransportLength();
                 publishActiveLoopForUi(cmd.trackId);
             }
@@ -364,6 +433,7 @@ void LooperEngine::handleCommand(const EngineCommand& cmd) noexcept {
                 for (int k = 0; k + 1 < count; ++k) {
                     m_tracks[tix].cycleNextLoop();
                 }
+                m_pendingActiveLoopIx[tix].reset();
                 updateTransportLength();
                 publishActiveLoopForUi(cmd.trackId);
             }
@@ -381,6 +451,7 @@ void LooperEngine::handleCommand(const EngineCommand& cmd) noexcept {
         case CommandKind::SwitchActiveLoop:
             if (cmd.trackId >= 0 && cmd.trackId < kNumTracks) {
                 m_tracks[tix].setActiveLoopIx(cmd.intArg);
+                m_pendingActiveLoopIx[tix].reset();
                 updateTransportLength();
                 publishActiveLoopForUi(cmd.trackId);
             }
@@ -464,7 +535,9 @@ void LooperEngine::handleTransportCrossings(int numSamples,
     for (int s = 0; s < numSamples; ++s) {
         const std::size_t abs = (curPos + static_cast<std::size_t>(s)) % len;
 
-        // Loop-wrap crossing: any CountIn tracks begin recording here.
+        // Loop-wrap crossing: any CountIn tracks begin recording here; pending
+        // active-loop switches (from timbre transfer) also fire here so the
+        // new loop starts phase-aligned at bar 0.
         if (abs == 0) {
             for (int i = 0; i < kNumTracks; ++i) {
                 const auto ix = static_cast<std::size_t>(i);
@@ -473,6 +546,14 @@ void LooperEngine::handleTransportCrossings(int numSamples,
                     m_recBufs[ix]->reset();
                     captureStart[ix] = s;
                     pushEvent(EngineEvent{EventKind::RecordingStarted, i, 0, 0, 0.0, 0});
+                }
+                if (m_pendingActiveLoopIx[ix].has_value()) {
+                    const int newIdx = *m_pendingActiveLoopIx[ix];
+                    m_tracks[ix].setActiveLoopIx(newIdx);
+                    m_pendingActiveLoopIx[ix].reset();
+                    publishActiveLoopForUi(i);
+                    LOG_INFO("LooperEngine: bar-0 crossing on track " + std::to_string(i)
+                             + " — switched active loop to index " + std::to_string(newIdx));
                 }
             }
         }
@@ -509,6 +590,8 @@ void LooperEngine::processBlock(const float* const* inputs, int numInputChannels
     while (auto cmd = m_commandQueue.tryPop()) {
         handleCommand(*cmd);
     }
+
+    drainLoopInbox();
 
     const auto bufSize = static_cast<std::size_t>(numSamples);
     if (m_scratchMono.size() < bufSize) {

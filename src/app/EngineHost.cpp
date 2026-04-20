@@ -1,14 +1,55 @@
 #include "EngineHost.h"
 
 #include "Settings.h"
+#include "TimbreTransferService.h"
 
 #include "core/Logger.h"
+#include "core/Timbre/TimbreTransfer.h"
 
+#include <juce_core/juce_core.h>
+
+#include <cctype>
 #include <string>
+#include <vector>
 
 namespace loopa::app {
 
-EngineHost::EngineHost() = default;
+namespace {
+
+juce::File resolveModelsDir() {
+    const auto appFile = juce::File::getSpecialLocation(
+        juce::File::currentApplicationFile);
+    return appFile.getChildFile("Contents/Resources/models");
+}
+
+std::vector<loopa::TimbrePreset> discoverPresets(const juce::File& modelsDir) {
+    auto files = modelsDir.findChildFiles(juce::File::findFiles, false, "timbre_*.pt");
+    files.sort();
+    std::vector<loopa::TimbrePreset> out;
+    for (const auto& f : files) {
+        // filename format: "timbre_<idx>_<name>.pt" — extract <name>
+        const auto stem = f.getFileNameWithoutExtension().toStdString();
+        std::string name = stem;
+        auto firstUnderscore = stem.find('_');
+        if (firstUnderscore != std::string::npos) {
+            auto secondUnderscore = stem.find('_', firstUnderscore + 1);
+            if (secondUnderscore != std::string::npos) {
+                name = stem.substr(secondUnderscore + 1);
+            }
+        }
+        // Capitalise first letter for display ("piano" -> "Piano").
+        if (!name.empty()) name[0] = static_cast<char>(std::toupper(name[0]));
+        out.push_back({name, f.getFullPathName().toStdString()});
+    }
+    return out;
+}
+
+}  // namespace
+
+EngineHost::EngineHost()
+    : m_timbreService(std::make_unique<TimbreTransferService>(
+          resolveModelsDir().getFullPathName().toStdString(),
+          discoverPresets(resolveModelsDir()))) {}
 
 EngineHost::~EngineHost() {
     stop();
@@ -32,20 +73,32 @@ void EngineHost::start() {
         return;
     }
 
-    // If no saved state, nudge toward 48 kHz / 128 samples as the default.
-    if (savedXml == nullptr) {
+    // Force 48 kHz / 128 samples on every start, regardless of saved device
+    // state. The RAVE timbre-transfer model is trained at 48 kHz; feeding it
+    // any other rate produces pitch-shifted garbage that sounds like a
+    // distorted version of the input. If the hardware refuses 48 kHz we log
+    // an error so it's obvious in the console.
+    {
         auto setup = m_deviceManager.getAudioDeviceSetup();
-        setup.sampleRate = 48000.0;
-        setup.bufferSize = 128;
-        setup.useDefaultInputChannels = true;
-        setup.useDefaultOutputChannels = true;
-        const juce::String setupError = m_deviceManager.setAudioDeviceSetup(setup, true);
-        if (setupError.isNotEmpty()) {
-            LOG_WARN(std::string("Audio setup adjusted: ") + setupError.toStdString());
+        if (setup.sampleRate != 48000.0 || setup.bufferSize != 128) {
+            setup.sampleRate = 48000.0;
+            setup.bufferSize = 128;
+            setup.useDefaultInputChannels = true;
+            setup.useDefaultOutputChannels = true;
+            const juce::String setupError = m_deviceManager.setAudioDeviceSetup(setup, true);
+            if (setupError.isNotEmpty()) {
+                LOG_ERROR(std::string("Failed to force 48 kHz / 128 samples: ")
+                          + setupError.toStdString());
+            }
         }
     }
 
     const auto applied = m_deviceManager.getAudioDeviceSetup();
+    if (applied.sampleRate != 48000.0) {
+        LOG_ERROR("Audio device is at " + std::to_string(applied.sampleRate)
+                  + " Hz, not 48000 Hz — timbre transfer will sound wrong. "
+                    "Select a 48 kHz-capable device in Settings.");
+    }
     LOG_INFO("Audio device: " + applied.outputDeviceName.toStdString()
              + " @ " + std::to_string(applied.sampleRate) + " Hz, "
              + std::to_string(applied.bufferSize) + " samples");

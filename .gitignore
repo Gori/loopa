@@ -1,5 +1,7 @@
 build/
 build-*/
+Testing/
+resources/models/
 .DS_Store
 *.user
 *.xcodeproj/

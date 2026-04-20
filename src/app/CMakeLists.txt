@@ -18,6 +18,7 @@ set(LOOPA_APP_OWN_SOURCES
     ChipButton.cpp
     TopBar.cpp
     TrackRow.cpp
+    TimbreTransferService.cpp
     Settings.cpp
     SettingsComponent.cpp
     SettingsWindow.cpp
@@ -48,6 +49,7 @@ target_compile_definitions(LoopaApp PRIVATE
 target_link_libraries(LoopaApp
     PRIVATE
         LoopaCore
+        LoopaTimbre
         juce::juce_gui_extra
         juce::juce_audio_utils
         juce::juce_audio_devices
@@ -60,6 +62,40 @@ target_link_libraries(LoopaApp
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
 )
+
+# libtorch ships multiple dylibs (libtorch, libtorch_cpu, libc10, libomp,
+# ...). We bundle the whole lib/ directory into the .app's Frameworks folder
+# and set an rpath so the executable can locate them at runtime. Same
+# strategy for the .ts model file.
+target_link_options(LoopaApp PRIVATE
+    "LINKER:-rpath,@executable_path/../Frameworks"
+)
+
+file(GLOB LOOPA_LIBTORCH_DYLIBS "${libtorch_SOURCE_DIR}/lib/*.dylib")
+add_custom_command(TARGET LoopaApp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_BUNDLE_CONTENT_DIR:LoopaApp>/Frameworks"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${LOOPA_LIBTORCH_DYLIBS}
+        "$<TARGET_BUNDLE_CONTENT_DIR:LoopaApp>/Frameworks"
+    VERBATIM)
+
+# Bundle every .ts model primitive + every timbre .pt vector.
+add_custom_command(TARGET LoopaApp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_BUNDLE_CONTENT_DIR:LoopaApp>/Resources/models"
+    VERBATIM)
+file(GLOB LOOPA_MODEL_FILES
+    "${LOOPA_MODELS_DIR}/*.ts"
+    "${LOOPA_MODELS_DIR}/*.pt")
+foreach(mf ${LOOPA_MODEL_FILES})
+    get_filename_component(mfname "${mf}" NAME)
+    add_custom_command(TARGET LoopaApp POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${mf}"
+            "$<TARGET_BUNDLE_CONTENT_DIR:LoopaApp>/Resources/models/${mfname}"
+        VERBATIM)
+endforeach()
 
 if(LOOPA_ENABLE_SANITIZERS)
     target_compile_options(LoopaApp PRIVATE ${LOOPA_SAN_COMPILE_FLAGS})

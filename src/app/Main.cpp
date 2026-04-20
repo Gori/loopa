@@ -32,7 +32,8 @@ public:
             juce::Colour(0xFF0B0B0D),
             juce::DocumentWindow::allButtons,
             m_engineHost->engine(),
-            m_engineHost->deviceManager());
+            m_engineHost->deviceManager(),
+            m_engineHost->timbreService());
     }
 
     void shutdown() override {

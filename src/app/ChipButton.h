@@ -25,6 +25,7 @@ public:
     void setSelected(bool selected);
     void setEnabled2(bool enabled);           // visual enabled (not juce::Component::setEnabled)
     void setOnClick(std::function<void()> onClick);
+    void setOnRightClick(std::function<void()> onRightClick);
     void setIcon(ChipIcon i);                 // non-None icons replace the text render path
     void setDrawBackground(bool draw);        // turn off the rounded-rect fill (handy for icons)
 
@@ -42,6 +43,7 @@ private:
     bool m_drawBackground = true;
     ChipIcon m_icon = ChipIcon::None;
     std::function<void()> m_onClick;
+    std::function<void()> m_onRightClick;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChipButton)
 };

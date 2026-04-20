@@ -86,6 +86,17 @@ public:
         return m_activeLoopIx;
     }
 
+    // Append a loop without changing the active index (unless there was no
+    // active loop, in which case the new one becomes active). Used by the
+    // timbre-transfer path, which defers activation to the next bar-0
+    // crossing so the switch lands phase-aligned with the playing loop.
+    int appendLoop(std::shared_ptr<Loop> loop) {
+        m_loops.push_back(std::move(loop));
+        const int idx = static_cast<int>(m_loops.size()) - 1;
+        if (m_activeLoopIx < 0) m_activeLoopIx = idx;
+        return idx;
+    }
+
     // Remove the loop at index i. If it was active, select the next loop
     // (or -1 if the list is now empty).
     void removeLoop(int i) {

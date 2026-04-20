@@ -22,6 +22,7 @@ const char* modeLabel(int modeInt) {
 // Layout constants (see plan file).
 constexpr int kNumberColumnWidth = 48;
 constexpr int kChipColumnWidth   = 74;
+constexpr int kConvertChipWidth  = 74;
 constexpr int kChipHeight        = 24;
 constexpr int kChipHGap          = 8;
 constexpr int kChipVGap          = 4;
@@ -29,13 +30,15 @@ constexpr int kMuteIconSize      = 28;
 constexpr int kInnerPadX         = 12;
 constexpr int kInnerPadY         = 10;
 
-// Total horizontal strip = number | chip-grid | mute | paddings.
+// Total horizontal strip = number | chip-grid | AI chip | mute | paddings.
 constexpr int kLeftStripWidth =
     kInnerPadX                // outer left pad
   + kNumberColumnWidth
   + kInnerPadX                // gap between number and grid
   + 2 * kChipColumnWidth + kChipHGap   // 2x2 grid width
-  + kInnerPadX                // gap between grid and mute
+  + kInnerPadX                // gap between grid and AI chip
+  + kConvertChipWidth
+  + kInnerPadX                // gap between AI chip and mute
   + kMuteIconSize
   + kInnerPadX;               // outer right pad
 
@@ -100,6 +103,13 @@ TrackRow::TrackRow(EngineBridge& bridge, int trackId)
     m_mode.setOnClick([this] { cycleMode(); });
     addAndMakeVisible(m_mode);
 
+    m_convert.setLabel("AI");
+    m_convert.setValue("...");   // updated from bridge.timbreName(0) on first update()
+    m_convert.setAccentColour(theme::trackColour(trackId));
+    m_convert.setOnClick([this] { convertWithCurrentTimbre(); });
+    m_convert.setOnRightClick([this] { showTimbreMenu(); });
+    addAndMakeVisible(m_convert);
+
     m_mute.setIcon(ChipIcon::SpeakerMute);
     m_mute.setDrawBackground(false);
     m_mute.setAccentColour(theme::trackColour(trackId));
@@ -158,6 +168,13 @@ void TrackRow::resized() {
 
     left.removeFromLeft(kInnerPadX);
 
+    // AI convert chip — vertically centred, single chip height.
+    auto convertArea = left.removeFromLeft(kConvertChipWidth)
+                           .withSizeKeepingCentre(kConvertChipWidth, kChipHeight);
+    m_convert.setBounds(convertArea);
+
+    left.removeFromLeft(kInnerPadX);
+
     // Mute icon — vertically centred.
     auto muteArea = left.removeFromLeft(kMuteIconSize)
                          .withSizeKeepingCentre(kMuteIconSize, kMuteIconSize);
@@ -199,6 +216,22 @@ void TrackRow::update(const loopa::LooperEngine::Snapshot& s) {
     // Bars / Mode
     m_bars.setValue(juce::String(barsVal));
     m_mode.setLabel(modeLabel(modeVal));
+
+    // AI convert chip: disabled when no active loop. While a conversion is
+    // running, show an ellipsis in place of the instrument name. Left-click
+    // converts using the currently-selected timbre preset; right-click
+    // opens a menu to pick a different preset.
+    const bool converting = m_bridge.isConverting(m_trackId);
+    const bool canConvert = (loopCount > 0) && (activeIx >= 0) && !converting;
+    m_convert.setEnabled2(canConvert);
+    juce::String display;
+    if (converting) {
+        display = juce::String(juce::CharPointer_UTF8("\xE2\x80\xA6"));
+    } else {
+        auto name = m_bridge.timbreName(m_currentTimbreIndex);
+        display = name.empty() ? juce::String("...") : juce::String(name);
+    }
+    m_convert.setValue(display);
 
     // Mute icon active-state == muted
     m_mute.setActive(muted);
@@ -244,6 +277,37 @@ void TrackRow::cycleInput() {
 void TrackRow::toggleMute() {
     const bool curr = m_bridge.snapshot().trackMuted[static_cast<std::size_t>(m_trackId)];
     m_bridge.setMuted(m_trackId, !curr);
+}
+
+void TrackRow::convertWithCurrentTimbre() {
+    m_bridge.convertActiveLoop(m_trackId, m_currentTimbreIndex);
+}
+
+void TrackRow::showTimbreMenu() {
+    juce::PopupMenu menu;
+    const int n = m_bridge.numTimbres();
+    if (n <= 0) {
+        menu.addItem(1, "(loading...)", false, false);
+    } else {
+        for (int i = 0; i < n; ++i) {
+            auto name = m_bridge.timbreName(i);
+            menu.addItem(i + 1,
+                         juce::String(name.empty()
+                                       ? juce::String("Timbre ") + juce::String(i + 1)
+                                       : juce::String(name)),
+                         /*enabled=*/true,
+                         /*ticked=*/i == m_currentTimbreIndex);
+        }
+    }
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&m_convert),
+        [this](int result) {
+            if (result <= 0) return;
+            m_currentTimbreIndex = result - 1;
+            auto name = m_bridge.timbreName(m_currentTimbreIndex);
+            m_convert.setValue(name.empty()
+                ? juce::String("T") + juce::String(result)
+                : juce::String(name));
+        });
 }
 
 }  // namespace loopa::app

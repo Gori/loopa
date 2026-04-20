@@ -55,6 +55,9 @@ enum class EventKind : std::uint8_t {
     BpmLocked,             // doubleArg: bpm, intArg: bars
     CountInTick,           // trackId, intArg: beats remaining (N..1)
     LevelPeak,             // trackId, doubleArg: peak [0..1]
+    LoopAdded,             // trackId, intArg: newLoopIx (fired when a loop is
+                           //   handed to the engine via submitLoop — e.g. from
+                           //   timbre transfer completion)
 };
 
 struct EngineEvent {

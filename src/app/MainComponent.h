@@ -16,10 +16,13 @@ class LooperEngine;
 namespace loopa::app {
 
 class SettingsWindow;
+class TimbreTransferService;
 
 class MainComponent : public juce::Component, private juce::Timer {
 public:
-    MainComponent(loopa::LooperEngine& engine, juce::AudioDeviceManager& deviceManager);
+    MainComponent(loopa::LooperEngine& engine,
+                  juce::AudioDeviceManager& deviceManager,
+                  TimbreTransferService& timbre);
     ~MainComponent() override;
 
     void paint(juce::Graphics& g) override;
