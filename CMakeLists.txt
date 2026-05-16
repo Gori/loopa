@@ -131,6 +131,7 @@ set(LOOPA_MODELS_DIR "${CMAKE_SOURCE_DIR}/resources/models"
 # ---- Targets --------------------------------------------------------------
 add_subdirectory(src/core)
 add_subdirectory(src/core/Timbre)
+add_subdirectory(src/core/AiPreprocess)
 add_subdirectory(src/app)
 
 enable_testing()

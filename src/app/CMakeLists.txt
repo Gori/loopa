@@ -50,6 +50,7 @@ target_link_libraries(LoopaApp
     PRIVATE
         LoopaCore
         LoopaTimbre
+        LoopaAiPreprocess
         juce::juce_gui_extra
         juce::juce_audio_utils
         juce::juce_audio_devices

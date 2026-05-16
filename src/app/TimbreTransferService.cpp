@@ -1,5 +1,8 @@
 #include "TimbreTransferService.h"
 
+#include "Settings.h"
+
+#include "core/AiPreprocess/AiPreprocess.h"
 #include "core/Logger.h"
 #include "core/Loop.h"
 #include "core/Timbre/TimbreTransfer.h"
@@ -19,7 +22,8 @@ namespace loopa::app {
 TimbreTransferService::TimbreTransferService(std::string modelDir,
                                                std::vector<loopa::TimbrePreset> presets)
     : m_modelDir(std::move(modelDir)),
-      m_presets(std::move(presets)) {
+      m_presets(std::move(presets)),
+      m_preproc(std::make_unique<loopa::AiPreprocessor>(m_modelDir)) {
     LOG_INFO("TimbreTransferService: constructed — scheduling eager preload ("
              + std::to_string(m_presets.size()) + " presets from " + m_modelDir + ")");
     m_preloadRequested = true;
@@ -153,8 +157,35 @@ void TimbreTransferService::workerMain() {
         }
 
         try {
+            // Read pre-process settings at the moment of conversion. If every
+            // toggle is off, move the source through unchanged — no copy, no
+            // CPU spent. This preserves bit-exact pass-through identical to
+            // the pre-AiPreprocess pipeline.
+            const auto& s = loopa::app::Settings::instance().data();
+            const bool anyPreOn = s.aiPreDenoise || s.aiPreVocalIsolate
+                                  || s.aiPreLoudnessNormalize;
+            std::shared_ptr<const loopa::Loop> sourceToTransfer;
+            if (!anyPreOn) {
+                sourceToTransfer = std::move(job.source);
+            } else {
+                auto mut = job.source->snapshot();
+                const auto tPre0 = std::chrono::steady_clock::now();
+                m_preproc->process(mut->data(), mut->length(), mut->sampleRate(),
+                                   loopa::AiPreprocessor::Options{
+                                       s.aiPreDenoise, s.aiPreVocalIsolate,
+                                       s.aiPreLoudnessNormalize, -18.0f});
+                const auto tPre1 = std::chrono::steady_clock::now();
+                LOG_INFO("TimbreTransferService::worker: preprocess "
+                         + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                              tPre1 - tPre0).count())
+                         + " ms (denoise=" + std::to_string(s.aiPreDenoise)
+                         + " vocal=" + std::to_string(s.aiPreVocalIsolate)
+                         + " lufs=" + std::to_string(s.aiPreLoudnessNormalize) + ")");
+                sourceToTransfer = mut;
+            }
+
             const auto t0 = std::chrono::steady_clock::now();
-            auto out = m_engine->transfer(std::move(job.source), job.timbreIndex);
+            auto out = m_engine->transfer(std::move(sourceToTransfer), job.timbreIndex);
             const auto t1 = std::chrono::steady_clock::now();
             const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
             LOG_INFO("TimbreTransferService::worker: track " + std::to_string(job.trackId)

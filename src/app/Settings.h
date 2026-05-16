@@ -13,6 +13,11 @@ struct SettingsData {
     float        metronomeVolume                     = 0.35f; // linear, 0..1
     bool         metronomeAutoOnAfterFirstRecord     = false;
     int          defaultBarsForNewTracks             = 4;     // ∈ {1,2,4,8,16}
+    // Optional pre-processing applied before the AI timbre transfer. All
+    // default off → bit-exact pass-through identical to today.
+    bool         aiPreDenoise                        = false;
+    bool         aiPreVocalIsolate                   = false;
+    bool         aiPreLoudnessNormalize              = false;
 };
 
 // Global, persistent application settings. Stored as JSON at
@@ -35,6 +40,9 @@ public:
     void setMetronomeVolume(float v);
     void setMetronomeAutoOnAfterFirstRecord(bool v);
     void setDefaultBarsForNewTracks(int bars);
+    void setAiPreDenoise(bool v);
+    void setAiPreVocalIsolate(bool v);
+    void setAiPreLoudnessNormalize(bool v);
 
     // Override the file path (tests only).
     void setFileOverride(juce::File f);

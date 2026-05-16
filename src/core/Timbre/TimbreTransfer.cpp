@@ -1,6 +1,8 @@
 #include "core/Timbre/TimbreTransfer.h"
 
+#include "core/AudioWavDump.h"
 #include "core/Logger.h"
+#include "core/Timbre/AudioResample.h"
 
 #include <torch/script.h>
 #include <torch/nn/functional.h>
@@ -66,101 +68,12 @@ std::string fmtStats(const char* label, std::size_t n, const Stats& s) {
     return o.str();
 }
 
-// Simple polyphase sinc resampler. Applies a Kaiser-windowed lowpass at the
-// minimum of src/dst Nyquist, then does rational-ratio resampling. Not as
-// fast as libsoxr but avoids linear-interp aliasing/stair-stepping that
-// produces audible distortion on anything above ~6 kHz.
-torch::Tensor resample(torch::Tensor audio1d, double srcSr, double dstSr) {
-    if (std::abs(srcSr - dstSr) < 1e-6) return audio1d;
-    const int64_t srcLen = audio1d.size(-1);
-    const int64_t dstLen = static_cast<int64_t>(
-        std::llround(static_cast<double>(srcLen) * dstSr / srcSr));
-
-    // Kaiser-windowed sinc with ~64 taps. Cutoff = 0.475 * min(srcSr, dstSr)
-    // so we have a transition band up to Nyquist.
-    constexpr int zeroCrossings = 32;
-    const double fCut = 0.475 * std::min(srcSr, dstSr);
-    const double fsHigher = std::max(srcSr, dstSr);
-    const int tapsPerSide = static_cast<int>(
-        std::ceil(zeroCrossings * fsHigher / fCut));
-
-    // Use torchaudio-free implementation: precompute resample matrix
-    // W[dst, src] where each row is the windowed-sinc centered at the
-    // fractional src index (dst * srcSr / dstSr). Then y = W @ x.
-    // This is equivalent to conv-resample but simple to write.
-    auto fp32 = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
-    auto src = audio1d.to(torch::kCPU).to(torch::kFloat32).contiguous();
-    auto out = torch::zeros({dstLen}, fp32);
-    const float* sp = src.data_ptr<float>();
-    float* op = out.data_ptr<float>();
-    const double ratio = srcSr / dstSr;
-    // Kaiser window beta for ~60 dB stopband attenuation.
-    const double beta = 6.0;
-    auto i0 = [](double x) {
-        // Modified Bessel I0 approximation (Numerical Recipes-style).
-        double ax = std::fabs(x), ans;
-        if (ax < 3.75) {
-            double y = x / 3.75; y *= y;
-            ans = 1.0 + y*(3.5156229 + y*(3.0899424 + y*(1.2067492
-                  + y*(0.2659732 + y*(0.0360768 + y*0.0045813)))));
-        } else {
-            double y = 3.75 / ax;
-            ans = (std::exp(ax) / std::sqrt(ax)) * (0.39894228
-                  + y*(0.01328592 + y*(0.00225319 + y*(-0.00157565
-                  + y*(0.00916281 + y*(-0.02057706 + y*(0.02635537
-                  + y*(-0.01647633 + y*0.00392377))))))));
-        }
-        return ans;
-    };
-    const double i0Beta = i0(beta);
-    const double gain = std::min(1.0, dstSr / srcSr);  // prevent clipping on upsample
-    for (int64_t n = 0; n < dstLen; ++n) {
-        const double centre = static_cast<double>(n) * ratio;
-        const int64_t iStart = static_cast<int64_t>(std::floor(centre)) - tapsPerSide + 1;
-        const int64_t iEnd   = iStart + 2 * tapsPerSide;
-        double acc = 0.0;
-        for (int64_t i = iStart; i <= iEnd; ++i) {
-            if (i < 0 || i >= srcLen) continue;
-            const double t = (static_cast<double>(i) - centre) * gain;
-            double sinc;
-            if (std::fabs(t) < 1e-9) sinc = 1.0;
-            else                      sinc = std::sin(M_PI * t) / (M_PI * t);
-            const double u = static_cast<double>(i - iStart + 1) / (2 * tapsPerSide);
-            const double win = i0(beta * std::sqrt(std::max(0.0, 1.0 - (2*u - 1)*(2*u - 1)))) / i0Beta;
-            acc += static_cast<double>(sp[i]) * sinc * win * gain;
-        }
-        op[n] = static_cast<float>(acc);
-    }
-    return out;
-}
-
-// Write a [N]-shaped float32 tensor as a 32-bit-float mono WAV. Tiny helper
-// for the diagnostic LOOPA_TIMBRE_DUMP path. No external dep.
+// Wrap the shared mono-float32 WAV writer for tensor inputs used in the
+// LOOPA_TIMBRE_DUMP diagnostic path.
 void writeWav(const std::string& path, torch::Tensor audio1d, double sr) {
-    audio1d = audio1d.to(torch::kCPU).to(torch::kFloat32).contiguous();
-    const int32_t n = static_cast<int32_t>(audio1d.size(0));
-    // Ensure the parent dir exists; fstream doesn't create it.
-    std::error_code ec;
-    std::filesystem::create_directories(
-        std::filesystem::path(path).parent_path(), ec);
-    std::ofstream f(path, std::ios::binary);
-    if (!f) {
-        LOG_WARN("TimbreTransfer: failed to open " + path + " for dump");
-        return;
-    }
-    auto w32 = [&](int32_t v) { f.write(reinterpret_cast<char*>(&v), 4); };
-    auto w16 = [&](int16_t v) { f.write(reinterpret_cast<char*>(&v), 2); };
-    const int32_t byteRate = static_cast<int32_t>(sr) * 4;
-    f.write("RIFF", 4);    w32(36 + n * 4);
-    f.write("WAVE", 4);    f.write("fmt ", 4);  w32(16);
-    w16(3); w16(1);                             // fmt=IEEE float, 1 ch
-    w32(static_cast<int32_t>(sr));
-    w32(byteRate); w16(4); w16(32);             // block align, bits per sample
-    f.write("data", 4);    w32(n * 4);
-    f.write(reinterpret_cast<const char*>(audio1d.data_ptr<float>()), n * 4);
-    LOG_INFO("TimbreTransfer: wrote dump " + path
-             + " (" + std::to_string(n) + " samples @ "
-             + std::to_string(static_cast<int>(sr)) + " Hz)");
+    auto t = audio1d.to(torch::kCPU).to(torch::kFloat32).contiguous();
+    loopa::writeWavMonoF32(path, t.data_ptr<float>(),
+                            static_cast<std::size_t>(t.size(0)), sr);
 }
 
 bool shouldDump() { return std::getenv(kDumpEnvVar) != nullptr; }
@@ -399,7 +312,7 @@ std::shared_ptr<Loop> TimbreTransferEngine::transfer(std::shared_ptr<const Loop>
              + " (now peak=1.0)");
 
     // (2) resample to model SR.
-    auto src24 = resample(srcTensor, engineSr, kModelSampleRate).to(m_impl->device);
+    auto src24 = loopa::resampleMono(srcTensor, engineSr, kModelSampleRate).to(m_impl->device);
     const auto tRs1 = std::chrono::steady_clock::now();
     if (shouldDump()) {
         writeWav(dumpDir() + "/01_source_48k.wav", srcTensor, engineSr);
@@ -454,7 +367,7 @@ std::shared_ptr<Loop> TimbreTransferEngine::transfer(std::shared_ptr<const Loop>
     }
 
     // (5,6) resample 24k -> 48k.
-    auto full48 = resample(full24, kModelSampleRate, engineSr);
+    auto full48 = loopa::resampleMono(full24, kModelSampleRate, engineSr);
     const auto tRs2 = std::chrono::steady_clock::now();
     if (shouldDump()) {
         writeWav(dumpDir() + "/04_final_48k.wav", full48, engineSr);

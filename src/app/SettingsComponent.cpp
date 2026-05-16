@@ -154,7 +154,39 @@ SettingsComponent::SettingsComponent(EngineBridge& bridge,
     };
     addAndMakeVisible(m_defaultBarsCombo);
 
+    // AI Pre-Processing
+    styleHeader(m_aiPreHeader, "AI PRE-PROCESSING");
+    addAndMakeVisible(m_aiPreHeader);
+
+    auto styleToggle = [](juce::ToggleButton& b, const juce::String& text) {
+        b.setButtonText(text);
+        b.setColour(juce::ToggleButton::textColourId, theme::col(theme::kText));
+        b.setColour(juce::ToggleButton::tickColourId, theme::col(theme::kAccent));
+    };
+    styleToggle(m_aiPreDenoiseToggle, "Remove background noise");
+    m_aiPreDenoiseToggle.onClick = [this] {
+        Settings::instance().setAiPreDenoise(m_aiPreDenoiseToggle.getToggleState());
+    };
+    addAndMakeVisible(m_aiPreDenoiseToggle);
+
+    styleToggle(m_aiPreVocalToggle, "Isolate vocals (remove accompaniment)");
+    m_aiPreVocalToggle.onClick = [this] {
+        Settings::instance().setAiPreVocalIsolate(m_aiPreVocalToggle.getToggleState());
+    };
+    addAndMakeVisible(m_aiPreVocalToggle);
+
+    styleToggle(m_aiPreLoudnessToggle, "Normalize loudness (LUFS)");
+    m_aiPreLoudnessToggle.onClick = [this] {
+        Settings::instance().setAiPreLoudnessNormalize(m_aiPreLoudnessToggle.getToggleState());
+    };
+    addAndMakeVisible(m_aiPreLoudnessToggle);
+
     refreshFromSettings();
+
+    // Fixed preferred size — the parent SettingsWindow wraps this in a
+    // juce::Viewport that scrolls vertically when the window is shorter
+    // than this height.
+    setSize(560, 820);
 }
 
 SettingsComponent::~SettingsComponent() {
@@ -211,6 +243,9 @@ void SettingsComponent::refreshFromSettings() {
     m_metroAutoToggle.setToggleState(d.metronomeAutoOnAfterFirstRecord,
                                      juce::dontSendNotification);
     m_defaultBarsCombo.setSelectedId(d.defaultBarsForNewTracks, juce::dontSendNotification);
+    m_aiPreDenoiseToggle.setToggleState(d.aiPreDenoise, juce::dontSendNotification);
+    m_aiPreVocalToggle.setToggleState(d.aiPreVocalIsolate, juce::dontSendNotification);
+    m_aiPreLoudnessToggle.setToggleState(d.aiPreLoudnessNormalize, juce::dontSendNotification);
 }
 
 void SettingsComponent::paint(juce::Graphics& g) {
@@ -223,6 +258,7 @@ void SettingsComponent::paint(juce::Graphics& g) {
     drawSep(m_mixHeader.getY() - 6);
     drawSep(m_metroHeader.getY() - 6);
     drawSep(m_defaultsHeader.getY() - 6);
+    drawSep(m_aiPreHeader.getY() - 6);
 }
 
 void SettingsComponent::resized() {
@@ -285,6 +321,16 @@ void SettingsComponent::resized() {
         m_defaultBarsLabel.setBounds(row.removeFromLeft(220));
         m_defaultBarsCombo.setBounds(row.removeFromLeft(96));
     }
+    area.removeFromTop(10);
+
+    // AI Pre-Processing
+    m_aiPreHeader.setBounds(area.removeFromTop(16));
+    area.removeFromTop(6);
+    m_aiPreDenoiseToggle.setBounds(area.removeFromTop(24));
+    area.removeFromTop(2);
+    m_aiPreVocalToggle.setBounds(area.removeFromTop(24));
+    area.removeFromTop(2);
+    m_aiPreLoudnessToggle.setBounds(area.removeFromTop(24));
 }
 
 }  // namespace loopa::app

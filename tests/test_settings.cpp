@@ -31,6 +31,9 @@ TEST_CASE("Settings defaults when file missing", "[settings]") {
     REQUIRE_FALSE(d.metronomeAutoOnAfterFirstRecord);
     REQUIRE(d.defaultBarsForNewTracks == 4);
     REQUIRE(d.audioDeviceStateXml.isEmpty());
+    REQUIRE_FALSE(d.aiPreDenoise);
+    REQUIRE_FALSE(d.aiPreVocalIsolate);
+    REQUIRE_FALSE(d.aiPreLoudnessNormalize);
 }
 
 TEST_CASE("Settings round-trip save and load", "[settings]") {
@@ -44,6 +47,9 @@ TEST_CASE("Settings round-trip save and load", "[settings]") {
     Settings::instance().setDefaultBarsForNewTracks(8);
     Settings::instance().setAudioDeviceStateXml(
         "<DEVICESETUP deviceType=\"TestDevice\"/>");
+    Settings::instance().setAiPreDenoise(true);
+    Settings::instance().setAiPreVocalIsolate(true);
+    Settings::instance().setAiPreLoudnessNormalize(true);
 
     // Wipe in-memory state and re-load from disk.
     Settings::instance().load();
@@ -53,6 +59,9 @@ TEST_CASE("Settings round-trip save and load", "[settings]") {
     REQUIRE(d.metronomeAutoOnAfterFirstRecord);
     REQUIRE(d.defaultBarsForNewTracks == 8);
     REQUIRE(d.audioDeviceStateXml.contains("TestDevice"));
+    REQUIRE(d.aiPreDenoise);
+    REQUIRE(d.aiPreVocalIsolate);
+    REQUIRE(d.aiPreLoudnessNormalize);
 }
 
 TEST_CASE("Settings rejects non-allowed bar counts silently", "[settings]") {

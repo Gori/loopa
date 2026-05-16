@@ -13,6 +13,7 @@ add_executable(LoopaTests
     test_metronome.cpp
     test_settings.cpp
     test_timbre_transfer.cpp
+    test_ai_preprocess.cpp
     ${CMAKE_SOURCE_DIR}/src/app/Settings.cpp
 )
 
@@ -22,6 +23,7 @@ target_link_libraries(LoopaTests
     PRIVATE
         LoopaCore
         LoopaTimbre
+        LoopaAiPreprocess
         Catch2::Catch2WithMain
         juce::juce_core
 )

@@ -14,15 +14,21 @@ constexpr const char* kKeyMasterGain      = "masterGain";
 constexpr const char* kKeyMetroVol        = "metronomeVolume";
 constexpr const char* kKeyMetroAuto       = "metronomeAutoOnAfterFirstRecord";
 constexpr const char* kKeyDefaultBars     = "defaultBarsForNewTracks";
+constexpr const char* kKeyAiPreDenoise    = "aiPreDenoise";
+constexpr const char* kKeyAiPreVocal      = "aiPreVocalIsolate";
+constexpr const char* kKeyAiPreLoudness   = "aiPreLoudnessNormalize";
 
 juce::var toVar(const SettingsData& d) {
     auto* obj = new juce::DynamicObject();
-    obj->setProperty(kKeyVersion,     d.version);
-    obj->setProperty(kKeyDeviceXml,   d.audioDeviceStateXml);
-    obj->setProperty(kKeyMasterGain,  d.masterGain);
-    obj->setProperty(kKeyMetroVol,    d.metronomeVolume);
-    obj->setProperty(kKeyMetroAuto,   d.metronomeAutoOnAfterFirstRecord);
-    obj->setProperty(kKeyDefaultBars, d.defaultBarsForNewTracks);
+    obj->setProperty(kKeyVersion,         d.version);
+    obj->setProperty(kKeyDeviceXml,       d.audioDeviceStateXml);
+    obj->setProperty(kKeyMasterGain,      d.masterGain);
+    obj->setProperty(kKeyMetroVol,        d.metronomeVolume);
+    obj->setProperty(kKeyMetroAuto,       d.metronomeAutoOnAfterFirstRecord);
+    obj->setProperty(kKeyDefaultBars,     d.defaultBarsForNewTracks);
+    obj->setProperty(kKeyAiPreDenoise,    d.aiPreDenoise);
+    obj->setProperty(kKeyAiPreVocal,      d.aiPreVocalIsolate);
+    obj->setProperty(kKeyAiPreLoudness,   d.aiPreLoudnessNormalize);
     return juce::var(obj);
 }
 
@@ -30,12 +36,15 @@ SettingsData fromVar(const juce::var& v) {
     SettingsData out{};
     if (!v.isObject()) return out;
 
-    if (v.hasProperty(kKeyVersion))     out.version                             = static_cast<int>(v[kKeyVersion]);
-    if (v.hasProperty(kKeyDeviceXml))   out.audioDeviceStateXml                 = v[kKeyDeviceXml].toString();
-    if (v.hasProperty(kKeyMasterGain))  out.masterGain                          = static_cast<float>(static_cast<double>(v[kKeyMasterGain]));
-    if (v.hasProperty(kKeyMetroVol))    out.metronomeVolume                     = static_cast<float>(static_cast<double>(v[kKeyMetroVol]));
-    if (v.hasProperty(kKeyMetroAuto))   out.metronomeAutoOnAfterFirstRecord     = static_cast<bool>(v[kKeyMetroAuto]);
-    if (v.hasProperty(kKeyDefaultBars)) out.defaultBarsForNewTracks             = static_cast<int>(v[kKeyDefaultBars]);
+    if (v.hasProperty(kKeyVersion))       out.version                             = static_cast<int>(v[kKeyVersion]);
+    if (v.hasProperty(kKeyDeviceXml))     out.audioDeviceStateXml                 = v[kKeyDeviceXml].toString();
+    if (v.hasProperty(kKeyMasterGain))    out.masterGain                          = static_cast<float>(static_cast<double>(v[kKeyMasterGain]));
+    if (v.hasProperty(kKeyMetroVol))      out.metronomeVolume                     = static_cast<float>(static_cast<double>(v[kKeyMetroVol]));
+    if (v.hasProperty(kKeyMetroAuto))     out.metronomeAutoOnAfterFirstRecord     = static_cast<bool>(v[kKeyMetroAuto]);
+    if (v.hasProperty(kKeyDefaultBars))   out.defaultBarsForNewTracks             = static_cast<int>(v[kKeyDefaultBars]);
+    if (v.hasProperty(kKeyAiPreDenoise))  out.aiPreDenoise                        = static_cast<bool>(v[kKeyAiPreDenoise]);
+    if (v.hasProperty(kKeyAiPreVocal))    out.aiPreVocalIsolate                   = static_cast<bool>(v[kKeyAiPreVocal]);
+    if (v.hasProperty(kKeyAiPreLoudness)) out.aiPreLoudnessNormalize              = static_cast<bool>(v[kKeyAiPreLoudness]);
 
     if (out.masterGain      < 0.0f) out.masterGain = 0.0f;
     if (out.metronomeVolume < 0.0f) out.metronomeVolume = 0.0f;
@@ -140,6 +149,18 @@ void Settings::setDefaultBarsForNewTracks(int bars) {
     for (int b : kAllowed) if (b == bars) { ok = true; break; }
     if (!ok) return;
     mutate([&](SettingsData& d) { d.defaultBarsForNewTracks = bars; });
+}
+
+void Settings::setAiPreDenoise(bool v) {
+    mutate([&](SettingsData& d) { d.aiPreDenoise = v; });
+}
+
+void Settings::setAiPreVocalIsolate(bool v) {
+    mutate([&](SettingsData& d) { d.aiPreVocalIsolate = v; });
+}
+
+void Settings::setAiPreLoudnessNormalize(bool v) {
+    mutate([&](SettingsData& d) { d.aiPreLoudnessNormalize = v; });
 }
 
 }  // namespace loopa::app

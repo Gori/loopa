@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/AiPreprocess/AiPreprocess.h"
 #include "core/LooperEngine.h"
 #include "core/Timbre/TimbreTransfer.h"
 
@@ -71,6 +72,7 @@ private:
     std::string m_modelDir;
     std::vector<loopa::TimbrePreset> m_presets;
     std::unique_ptr<loopa::TimbreTransferEngine> m_engine;
+    std::unique_ptr<loopa::AiPreprocessor> m_preproc;
 
     std::array<std::atomic<bool>, loopa::LooperEngine::kNumTracks> m_busy{};
 

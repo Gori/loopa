@@ -61,6 +61,11 @@ private:
     juce::Label m_defaultBarsLabel;
     juce::ComboBox m_defaultBarsCombo;
 
+    juce::Label m_aiPreHeader;
+    juce::ToggleButton m_aiPreDenoiseToggle;
+    juce::ToggleButton m_aiPreVocalToggle;
+    juce::ToggleButton m_aiPreLoudnessToggle;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SettingsComponent)
 };
 
